@@ -30,8 +30,7 @@ const uploadOnCloudinary = async (localFilePath) => {
     }
 };
 
-
-// const removeFromCloudinary = async(public_id) => 
+// const removeFromCloudinary = async(public_id) =>
 // {
 //   try {
 //       if(!public_id)  return null;
