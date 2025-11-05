@@ -19,7 +19,7 @@ const publishAVideo = asyncHandler(async (req, res) =>
     // TODO: get video, upload to cloudinary, create video
     const {title, description} = req.body;
 
-    if (!title || !description)
+    if (!title.trim() || !description.trim())
     {
         throw new ApiError(400, "Title and description are required");
     }
