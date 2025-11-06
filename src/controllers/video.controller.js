@@ -11,6 +11,11 @@ const getAllVideos = asyncHandler(async (req, res) => {
     const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
     //TODO: get all videos based on query, sort, pagination
 
+    // get video from the given search query 
+    // confirm if the video is from the given user 
+    // only get published videos
+    // get videos, thumbnail, title, description, duration, views, and owner info
+    // owner info includes fullname, avatar
     const videos = Video.find();
 })
 
@@ -24,8 +29,8 @@ const publishAVideo = asyncHandler(async (req, res) =>
         throw new ApiError(400, "Title and description are required");
     }
 
-    const videoFileLocalPath = req.files?.videoFile[0]?.path;
-    const thumbnailLocalPath = req.files?.thumbnail[0]?.path;
+    const videoFileLocalPath = req.files?.videoFile?.[0]?.path;
+    const thumbnailLocalPath = req.files?.thumbnail?.[0]?.path;
 
     if (!videoFileLocalPath || !thumbnailLocalPath)
     {
@@ -47,14 +52,14 @@ const publishAVideo = asyncHandler(async (req, res) =>
         owner: req.user._id,
         title,
         description,
-        duration: videoFile.duration,
+        duration: videoFile.duration || 0,
         isPublished: true
     });
 
     return res
-        .status(200)
-        .json(new ApiResponse(200, video, "Video uploaded successfully"));
-})
+        .status(201)
+        .json(new ApiResponse(201, video, "Video uploaded successfully"));
+});
 
 const getVideoById = asyncHandler(async (req, res) => {
     const { videoId } = req.params
