@@ -208,6 +208,12 @@ const publishAVideo = asyncHandler(async (req, res) =>
 });
 
 const getVideoById = asyncHandler(async (req, res) => {
+    // get video details
+    // get likes and comments
+    // get owner details 
+    // add to users watch history
+    // increase video view count
+    
     const { videoId } = req.params
     //TODO: get video by id
 
@@ -248,7 +254,6 @@ const updateVideo = asyncHandler(async (req, res) => {
         thumbnail = await uploadOnCloudinary(thumbnailLocalPath);
     }
 
-    console.log("thumbnail: " + thumbnail);
     const updateData = {};
 
     if (title && title.trim() !== "")
@@ -290,6 +295,8 @@ const updateVideo = asyncHandler(async (req, res) => {
 const deleteVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
     //TODO: delete video
+    // only owner can delete the video
+    // also delete all comments, likes related to the video
 
     if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
     {
@@ -310,6 +317,7 @@ const deleteVideo = asyncHandler(async (req, res) => {
 
 const togglePublishStatus = asyncHandler(async (req, res) => {
     const { videoId } = req.params
+    //only owner can toggle publish status
 
     if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
     {
