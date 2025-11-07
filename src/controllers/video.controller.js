@@ -8,16 +8,162 @@ import {uploadOnCloudinary} from "../utils/cloudinary.js"
 
 
 const getAllVideos = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
-    //TODO: get all videos based on query, sort, pagination
+    const {page = 1, limit = 10, query, sortBy = "createdAt", sortType = "desc", userId} = req.query;
 
-    // get video from the given search query 
-    // confirm if the video is from the given user 
-    // only get published videos
-    // get videos, thumbnail, title, description, duration, views, and owner info
-    // owner info includes fullname, avatar
-    const videos = Video.find();
-})
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build match stage
+    const match = {isPublished: true};
+
+    if (userId)
+    {
+        if (!mongoose.Types.ObjectId.isValid(userId))
+        {
+            throw new ApiError(400, "Please provide a valid user id");
+        }
+        match.owner = new mongoose.Types.ObjectId(userId);
+    }
+
+    // Build optional Atlas Search stage
+    let searchStage = null;
+    if (query && query.trim() !== "")
+    {
+        const q = query.trim();
+        searchStage = {
+            $search: {
+                index: "default",
+                text: {
+                    query: q,
+                    path: ["title", "description"]
+                }
+            }
+        };
+    }
+
+    const sortOrder = String(sortType).toLowerCase() === "asc" ? 1 : -1;
+    const sortObj = {[sortBy]: sortOrder};
+
+    // Get total count
+    const countPipeline = [];
+    if (searchStage)
+    {
+        countPipeline.push(searchStage);
+    }
+    countPipeline.push(
+        {$match: match},
+        {$count: "total"}
+    );
+
+    const countResult = await Video.aggregate(countPipeline);
+    const totalVideos = countResult[0]?.total || 0;
+    const totalPages = Math.ceil(totalVideos / limitNum);
+
+    // Build main aggregation pipeline
+    const pipeline = [];
+
+    // Apply search stage first if requested
+    if (searchStage)
+    {
+        pipeline.push(searchStage);
+    }
+
+    // Match published videos
+    pipeline.push({$match: match});
+
+    // Sort, skip, and limit
+    pipeline.push(
+        {$sort: sortObj},
+        {$skip: skip},
+        {$limit: limitNum}
+    );
+
+    // Lookup owner info
+    pipeline.push({
+        $lookup: {
+            from: "users",
+            localField: "owner",
+            foreignField: "_id",
+            as: "owner"
+        }
+    });
+
+    pipeline.push({$unwind: "$owner"});
+
+    // Lookup subscribers for the owner
+    pipeline.push({
+        $lookup: {
+            from: "subscriptions",
+            localField: "owner._id",
+            foreignField: "channel",
+            as: "ownerSubscribers"
+        }
+    });
+
+    // Add fields for subscriber count and isSubscribed
+    pipeline.push({
+        $addFields: {
+            "owner.subscribersCount": {
+                $size: "$ownerSubscribers"
+            },
+            "owner.isSubscribed": {
+                $cond: {
+                    if: req.user?._id,
+                    then: {
+                        $in: [req.user._id, "$ownerSubscribers.subscriber"]
+                    },
+                    else: false
+                }
+            }
+        }
+    });
+
+    // Project only required fields
+    pipeline.push({
+        $project: {
+            videoFile: 1,
+            thumbnail: 1,
+            title: 1,
+            description: 1,
+            duration: 1,
+            views: 1,
+            isPublished: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            owner: {
+                _id: 1,
+                fullName: 1,
+                username: 1,
+                avatar: 1,
+                subscribersCount: 1,
+                isSubscribed: 1
+            }
+        }
+    });
+
+    const videos = await Video.aggregate(pipeline);
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(
+                200,
+                {
+                    videos,
+                    pagination: {
+                        page: pageNum,
+                        limit: limitNum,
+                        totalVideos,
+                        totalPages,
+                        hasNextPage: pageNum < totalPages,
+                        hasPrevPage: pageNum > 1
+                    }
+                },
+                "Videos fetched successfully"
+            )
+        );
+});
 
 const publishAVideo = asyncHandler(async (req, res) =>
 {
