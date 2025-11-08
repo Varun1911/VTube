@@ -208,30 +208,161 @@ const publishAVideo = asyncHandler(async (req, res) =>
 });
 
 const getVideoById = asyncHandler(async (req, res) => {
-    // get video details
-    // get likes and comments
-    // get owner details 
-    // add to users watch history
-    // increase video view count
+    // // get video details 
+    // // get likes and comments
+    // // TODO - get owner details 
+    // // TODO add to users watch history
+    // // increase video view count
     
     const { videoId } = req.params
-    //TODO: get video by id
-
+ 
     if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
     {
         throw new ApiError(400, "Please provide a valid video id");
     }
 
-    const video = await Video.findById(videoId);
+    await Video.findByIdAndUpdate(
+        videoId, 
+        { $inc: { views: 1} }
+    );
 
-    if (!video)
+    const pipeline = [];
+    //get the video from id
+    pipeline.push(
+        {$match: {_id: new mongoose.ObjectId(videoId)}},
+      );
+
+
+    // get likes count and isLiked
+    pipeline.push(
+        {
+            $lookup : 
+            {
+                from: "likes",
+                localField: "_id",
+                foreignField: "video",
+                as: "likes"
+            }
+        },
+        {
+            $addFields: {
+                likesCount: { $size: "$likes"},
+                isLiked: {
+                    $in: [new mongoose.ObjectId(req.user._id), "$likes.likedBy"]
+                }
+            }
+        },
+        {
+            $project: { likes: 0}
+        }
+    );
+
+    // get comments on the video with owner's username and avatar and likes on the comment and if it is liked by the user.
+    pipeline.push(
+        {
+            $lookup: {
+                from: "comments",
+                localField: "_id",
+                foreignField: "video",
+                as: "comments",
+                pipeline: [
+                    { $sort: { createdAt: -1 } },
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner"
+                        }
+                    },
+                    { $unwind: "$owner"},
+                    {
+                        $lookup: 
+                        {
+                            from: "likes",
+                            localField: "_id",
+                            foreignField: "comment",
+                            as: "likes"
+                        }
+                    },
+                    {
+                        $addFields: {
+                            likesCount: {$size: "$likes"},
+                            isLiked: {
+                                $in: [new mongoose.ObjectId(req.user._id), "$likes.likedBy"]
+                            }
+                        }
+                    },
+                    {
+                        $project: 
+                        {   
+                            "owner.username": 1,
+                            "owner.avatar": 1,
+                            likesCount: 1,
+                            isLiked: 1,
+                            content: 1,
+                            createdAt: 1,
+                            updatedAt: 1
+                        }
+                    }
+                ]
+            }
+        }
+    );
+    
+
+    //get owner info - fullName, avatar, subscriberCount, isSubscribed
+    pipeline.push(
+        {
+            $lookup: {
+                from: "users",
+                localField: "owner",
+                foreignField: "_id",
+                as: "owner"
+            }
+        },
+        { $unwind: "owner" },
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "$owner._id",
+                foreignField: "channel",
+                as: "subscribers"
+            }
+        },
+        {
+            $addFields: {
+                subscriberCount: {
+                    $size: "$subscribers"
+                },
+                isSubscribed: {
+                    $in: [new mongoose.ObjectId(req.user._id), "$subscribers.subscriber"]
+                }
+            }
+        },
+        {
+            $project: {
+                subscribers: 0
+            }
+        }
+    );
+
+    const video = await Video.aggregate(pipeline);
+
+    if (!video || video.length === 0)
     {
         throw new ApiError(404, "Video with given id does not exist");
     }
 
+    await User.findByIdAndUpdate(req.user._id, 
+        {
+            $push: {watchHistory: videoId}
+        }
+    );
+
     return res
         .status(200)
-        .json(new ApiResponse(200, video, "Video fetched successfully"));
+        .json(new ApiResponse(200, video[0], "Video fetched successfully"));
 })
 
 const updateVideo = asyncHandler(async (req, res) => {
