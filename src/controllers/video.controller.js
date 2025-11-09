@@ -19,7 +19,7 @@ const getAllVideos = asyncHandler(async (req, res) => {
 
     if (userId)
     {
-        if (!mongoose.Types.ObjectId.isValid(userId))
+        if (!isValidObjectId(userId))
         {
             throw new ApiError(400, "Please provide a valid user id");
         }
@@ -216,20 +216,17 @@ const getVideoById = asyncHandler(async (req, res) => {
     
     const { videoId } = req.params
  
-    if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
+    if (!isValidObjectId(videoId))
     {
         throw new ApiError(400, "Please provide a valid video id");
     }
 
-    await Video.findByIdAndUpdate(
-        videoId, 
-        { $inc: { views: 1} }
-    );
-
     const pipeline = [];
     //get the video from id
     pipeline.push(
-        {$match: {_id: new mongoose.ObjectId(videoId)}},
+        {
+            $match: {_id: new mongoose.Types.ObjectId(videoId), isPublished: true},
+        },
       );
 
 
@@ -248,13 +245,10 @@ const getVideoById = asyncHandler(async (req, res) => {
             $addFields: {
                 likesCount: { $size: "$likes"},
                 isLiked: {
-                    $in: [new mongoose.ObjectId(req.user._id), "$likes.likedBy"]
+                    $in: [new mongoose.Types.ObjectId(req.user._id), "$likes.likedBy"]
                 }
             }
         },
-        {
-            $project: { likes: 0}
-        }
     );
 
     // get comments on the video with owner's username and avatar and likes on the comment and if it is liked by the user.
@@ -289,7 +283,7 @@ const getVideoById = asyncHandler(async (req, res) => {
                         $addFields: {
                             likesCount: {$size: "$likes"},
                             isLiked: {
-                                $in: [new mongoose.ObjectId(req.user._id), "$likes.likedBy"]
+                                $in: [new mongoose.Types.ObjectId(req.user._id), "$likes.likedBy"]
                             }
                         }
                     },
@@ -321,39 +315,64 @@ const getVideoById = asyncHandler(async (req, res) => {
                 as: "owner"
             }
         },
-        { $unwind: "owner" },
+        { $unwind: "$owner" },
         {
             $lookup: {
                 from: "subscriptions",
-                localField: "$owner._id",
+                localField: "owner._id",
                 foreignField: "channel",
                 as: "subscribers"
             }
         },
         {
             $addFields: {
-                subscriberCount: {
+                "owner.subscribersCount": {
                     $size: "$subscribers"
                 },
-                isSubscribed: {
-                    $in: [new mongoose.ObjectId(req.user._id), "$subscribers.subscriber"]
+                "owner.isSubscribed": {
+                    $in: [new mongoose.Types.ObjectId(req.user._id), "$subscribers.subscriber"]
                 }
             }
         },
-        {
-            $project: {
-                subscribers: 0
-            }
-        }
     );
 
+
+    //final projection 
+    pipeline.push(
+        {
+            $project: {
+                likes:0,
+                subscribers: 0,
+                "owner.password": 0,
+                "owner.refreshToken": 0,
+                "owner.email": 0,
+                "owner.watchHistory": 0,
+                "owner.createdAt": 0,
+                "owner.updatedAt": 0,
+                "owner.__v": 0,
+                "owner.username": 0,
+                "owner.coverImage": 0
+            }
+        }
+    )
+
     const video = await Video.aggregate(pipeline);
+    console.log(video);
 
     if (!video || video.length === 0)
     {
-        throw new ApiError(404, "Video with given id does not exist");
+        throw new ApiError(404, "Video does not exist");
     }
 
+
+    //increase views
+    await Video.findByIdAndUpdate(
+    videoId, 
+    { $inc: { views: 1} }
+    );
+
+
+    //add to user's watch history
     await User.findByIdAndUpdate(req.user._id, 
         {
             $push: {watchHistory: videoId}
@@ -363,13 +382,13 @@ const getVideoById = asyncHandler(async (req, res) => {
     return res
         .status(200)
         .json(new ApiResponse(200, video[0], "Video fetched successfully"));
-})
+});
 
 const updateVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
     //TODO: update video details like title, description, thumbnail
 
-    if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
+    if (!isValidObjectId(videoId))
     {
         throw new ApiError(400, "Please provide a valid video id")
     }
@@ -421,59 +440,78 @@ const updateVideo = asyncHandler(async (req, res) => {
     return res
         .status(200)
         .json(new ApiResponse(200, video, "Video updated successfully"));
-})
+});
 
 const deleteVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
-    //TODO: delete video
-    // only owner can delete the video
+    // // TODO: delete video
+    // // only owner can delete the video
     // also delete all comments, likes related to the video
 
-    if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
+    if (!isValidObjectId(videoId))
     {
         throw new ApiError(400, "Please provide a valid video id");
     }
 
-    const video = await Video.findByIdAndDelete(videoId);
+    // * Can do this way as well
+    // const video = await Video.findById(videoId);
 
-    if (!video)
-    {
-        throw new ApiError(400, "Video does not exist");
+    // if (!video)
+    // {
+    //     throw new ApiError(404, "Video does not exist");
+    // }
+
+    // if(video.owner?.toString() !== req.user._id.toString()){
+    //     throw new ApiError(403, "You are not authorized to delete this video");
+    // }
+
+   const video = await Video.findOneAndDelete({
+        _id: videoId,
+        owner: req.user._id
+    });
+
+    if (!video) {
+        throw new ApiError(404, "Video not found or you are not authorized");
     }
+
+    //delete likes
+
+    //delete comments 
 
     return res
         .status(200)
-        .json(200, {videoId: videoId}, "Video deleted successfully!");
-})
+        .json(new ApiResponse(200, {videoId: videoId}, "Video deleted successfully!"));
+});
 
 const togglePublishStatus = asyncHandler(async (req, res) => {
-    const { videoId } = req.params
-    //only owner can toggle publish status
+    const { videoId } = req.params;
 
-    if (!videoId || !mongoose.Types.ObjectId.isValid(videoId))
-    {
+    if (!mongoose.isValidObjectId(videoId)) {
         throw new ApiError(400, "Please provide a valid video id");
     }
 
-    const video = await Video.findByIdAndUpdate(
-        videoId,
+    const video = await Video.findOneAndUpdate(
+        {
+            _id: videoId,
+            owner: req.user._id  // Only update if user is owner
+        },
         [
-            {$set: {isPublished: {$not: "$isPublished"}}}
+            { $set: { isPublished: { $not: "$isPublished" } } }
         ],
         {
             new: true
         }
     );
 
-    if (!video)
-    {
-        throw new ApiError(404, "Video not found");
+    if (!video) {
+        throw new ApiError(404, "Video not found or you are not authorized");
     }
 
     return res
         .status(200)
-        .json(new ApiResponse(200, video, "Video publish status updated usccessfully"));
-})
+        .json(new ApiResponse(200, video, "Video publish status updated successfully"));
+});
+
 
 export {
     getAllVideos,
