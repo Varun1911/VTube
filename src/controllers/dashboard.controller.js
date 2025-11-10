@@ -13,6 +13,22 @@ const getChannelStats = asyncHandler(async (req, res) => {
     // total subscribers
     // total likes
     // total comments
+
+    const totalVideos = await Video.countDocuments({
+        owner: req.user._id,
+    });
+
+    // const totalViews = await
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(
+                200,
+                { totalVideos },
+                "Channel stats fetched successfully"
+            )
+        );
 });
 
 const getChannelVideos = asyncHandler(async (req, res) => {
